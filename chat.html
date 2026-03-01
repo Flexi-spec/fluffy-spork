@@ -110,153 +110,175 @@
     </main>
 
     <script>
-        // SIDEBAR TOGGLE LOGIC
-        function toggleSidebar() {
-            const sidebar = document.getElementById('sidebar');
-            const overlay = document.getElementById('overlay');
-            sidebar.classList.toggle('open');
-            overlay.classList.toggle('active');
-        }
+    function toggleSidebar() {
+        const sidebar = document.getElementById('sidebar');
+        const overlay = document.getElementById('overlay');
+        sidebar.classList.toggle('open');
+        overlay.classList.toggle('active');
+    }
 
-        const PARAMS = new URLSearchParams(window.location.search);
-        const ROOM = PARAMS.get('room');
-        const TARGET = PARAMS.get('target');
-        const IS_GUEST = !!ROOM;
+    const PARAMS = new URLSearchParams(window.location.search);
+    const ROOM = PARAMS.get('room');
+    const TARGET = PARAMS.get('target');
+    const IS_GUEST = !!ROOM;
 
-        const STATE = {
-            user: IS_GUEST ? TARGET : "Professor",
-            room: ROOM || null,
-            lastMsgCount: 0
-        };
+    const STATE = {
+        user: IS_GUEST ? TARGET : "Professor",
+        room: ROOM || null,
+        lastMsgCount: 0
+    };
 
-        if (IS_GUEST) {
-            document.body.classList.add('guest-mode');
-            document.getElementById('header-name').innerText = `Welcome, ${TARGET}`;
-            document.getElementById('header-status').innerText = "SECURE CHANNEL ACTIVE";
-            document.getElementById('led').className = "w-3 h-3 bg-blue-500 animate-pulse rounded-full shadow-[0_0_10px_#2563eb]";
-            startSync();
-        }
+    // FORCE chat.html links
+    function buildChatLink(room, name) {
+        return `${window.location.origin}/chat.html?room=${room}&target=${encodeURIComponent(name)}`;
+    }
 
-        async function requestNotificationAccess() {
-            const permission = await Notification.requestPermission();
-            if (permission === 'granted') alert("Satellite Pings Enabled.");
-        }
+    if (IS_GUEST) {
+        document.body.classList.add('guest-mode');
+        document.getElementById('header-name').innerText = `Welcome, ${TARGET}`;
+        document.getElementById('header-status').innerText = "SECURE CHANNEL ACTIVE";
+        document.getElementById('led').className = "w-3 h-3 bg-blue-500 animate-pulse rounded-full shadow-[0_0_10px_#2563eb]";
+        startSync();
+    }
 
-        function triggerAlert(user, text) {
-            if (Notification.permission === "granted" && user !== STATE.user) {
-                new Notification(`P.OS: ${user}`, { body: text });
-                const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3');
-                audio.play();
-            }
-        }
+    async function addGlobalContact() {
+        const name = document.getElementById('target-name').value.trim();
+        if(!name) return;
 
-        async function addGlobalContact() {
-            const name = document.getElementById('target-name').value.trim();
-            if(!name) return;
-            const newRoom = `Exec_${name}_${Math.floor(Math.random()*9999)}`;
-            const link = `${window.location.origin}${window.location.pathname}?room=${newRoom}&target=${encodeURIComponent(name)}`;
-            
-            await fetch(`/api/messages?room=MASTER_LIST`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ user: "SYSTEM", text: `${name}|${newRoom}|${link}` })
-            });
+        const newRoom = `Exec_${name}_${Math.floor(Math.random()*9999)}`;
+        const link = buildChatLink(newRoom, name);
 
-            document.getElementById('target-name').value = '';
-            syncContacts();
-        }
+        await fetch(`/api/messages?room=MASTER_LIST`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user: "SYSTEM", text: `${name}|${newRoom}|${link}` })
+        });
 
-        async function syncContacts() {
-            if (IS_GUEST) return;
-            const res = await fetch(`/api/messages?room=MASTER_LIST`);
-            const data = await res.json();
-            
-            document.getElementById('contact-list').innerHTML = data.map(m => {
-                const parts = m.text.split('|');
-                if(parts.length < 3) return '';
-                const [name, room, link] = parts;
-                return `
-                    <div class="p-4 glass rounded-2xl hover:border-blue-500/50 transition cursor-pointer mb-2" onclick="setRoom('${room}', '${name}')">
-                        <div class="flex justify-between items-center">
-                            <span class="font-bold text-sm text-white">${name}</span>
-                            <i class="fas fa-chevron-right text-[10px] text-slate-600"></i>
-                        </div>
-                        <div class="flex gap-3 mt-2">
-                            <button onclick="event.stopPropagation(); navigator.clipboard.writeText('${link}'); alert('Link Copied')" 
-                                class="text-[9px] text-blue-500 font-bold uppercase hover:text-white">Copy Link</button>
-                        </div>
+        document.getElementById('target-name').value = '';
+        syncContacts();
+    }
+
+    async function deleteContact(room) {
+        if(!confirm("Delete this contact permanently?")) return;
+
+        await fetch(`/api/messages?room=${room}`, { method: 'DELETE' });
+        await fetch(`/api/messages?room=MASTER_LIST&deleteRoom=${room}`, { method: 'DELETE' });
+
+        STATE.room = null;
+        document.getElementById('chat-window').innerHTML = '';
+        syncContacts();
+    }
+
+    async function clearMessages() {
+        if(!STATE.room) return;
+        if(!confirm("Clear all messages in this channel?")) return;
+
+        await fetch(`/api/messages?room=${STATE.room}`, { method: 'DELETE' });
+        document.getElementById('chat-window').innerHTML = '';
+        STATE.lastMsgCount = 0;
+    }
+
+    async function syncContacts() {
+        if (IS_GUEST) return;
+        const res = await fetch(`/api/messages?room=MASTER_LIST`);
+        const data = await res.json();
+
+        document.getElementById('contact-list').innerHTML = data.map(m => {
+            const parts = m.text.split('|');
+            if(parts.length < 3) return '';
+            const [name, room, link] = parts;
+
+            return `
+                <div class="p-4 glass rounded-2xl mb-2">
+                    <div onclick="setRoom('${room}', '${name}')" class="cursor-pointer">
+                        <span class="font-bold text-sm">${name}</span>
                     </div>
-                `;
-            }).join('');
+                    <div class="flex gap-3 mt-2 text-[9px] uppercase">
+                        <button onclick="navigator.clipboard.writeText('${link}')" class="text-blue-500">Copy</button>
+                        <button onclick="deleteContact('${room}')" class="text-red-500">Delete</button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    function setRoom(id, name) {
+        STATE.room = id;
+        document.getElementById('header-name').innerText = name;
+        document.getElementById('header-status').innerText = "CONNECTED";
+        syncChat();
+    }
+
+    async function syncChat() {
+        if (!STATE.room) return;
+
+        const res = await fetch(`/api/messages?room=${STATE.room}`);
+        if(res.status === 404){
+            alert("This channel no longer exists.");
+            window.location.href = "/chat.html";
+            return;
         }
 
-        function setRoom(id, name) {
-            STATE.room = id;
-            document.getElementById('header-name').innerText = `${name}`;
-            document.getElementById('header-status').innerText = "CONNECTED";
-            document.getElementById('led').className = "w-3 h-3 bg-blue-500 rounded-full shadow-[0_0_10px_#2563eb]";
-            if(window.innerWidth < 768) toggleSidebar(); // Close sidebar on mobile after selection
-            syncChat();
-        }
+        const msgs = await res.json();
 
-        async function syncChat() {
-            if (!STATE.room) return;
-            try {
-                const res = await fetch(`/api/messages?room=${STATE.room}`);
-                const msgs = await res.json();
-                
-                if (msgs.length > STATE.lastMsgCount) {
-                    const last = msgs[msgs.length - 1];
-                    if (STATE.lastMsgCount !== 0) triggerAlert(last.user, last.text);
-                    STATE.lastMsgCount = msgs.length;
-                    
-                    const win = document.getElementById('chat-window');
-                    win.innerHTML = msgs.map(m => `
-                        <div class="flex flex-col ${m.user === STATE.user ? 'items-end' : 'items-start'} mb-2">
-                            <div class="chat-bubble ${m.user === STATE.user ? 'mine' : 'theirs'}">
-                                ${m.text}
-                            </div>
-                            <span class="text-[8px] text-slate-500 uppercase font-bold px-2">${m.user}</span>
-                        </div>
-                    `).join('');
-                    win.scrollTop = win.scrollHeight;
-                }
-            } catch(e) {}
-        }
+        const win = document.getElementById('chat-window');
+        win.innerHTML = msgs.map((m,i) => `
+            <div class="flex flex-col ${m.user === STATE.user ? 'items-end' : 'items-start'} mb-2">
+                <div class="chat-bubble ${m.user === STATE.user ? 'mine' : 'theirs'}">
+                    ${m.text}
+                </div>
+                <div class="flex gap-2 text-[8px] px-2">
+                    <span class="text-slate-500">${m.user}</span>
+                    ${!IS_GUEST ? `<button onclick="deleteMessage(${i})" class="text-red-500">x</button>` : ''}
+                </div>
+            </div>
+        `).join('');
 
-        document.getElementById('send-form').onsubmit = async (e) => {
-            e.preventDefault();
-            const input = document.getElementById('msg');
-            if(!input.value || !STATE.room) return;
-            const text = input.value;
-            input.value = '';
+        win.scrollTop = win.scrollHeight;
+        STATE.lastMsgCount = msgs.length;
+    }
 
-            await fetch(`/api/messages?room=${STATE.room}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ user: STATE.user, text })
-            });
-            syncChat();
-        };
+    async function deleteMessage(index) {
+        await fetch(`/api/messages?room=${STATE.room}&index=${index}`, {
+            method: 'DELETE'
+        });
+        syncChat();
+    }
 
-        function startSync() {
-            setInterval(syncChat, 3000);
-            if(!IS_GUEST) setInterval(syncContacts, 10000);
-        }
+    async function callUser() {
+        if(!STATE.room) return;
 
-        function copyCurrentLink() {
-            navigator.clipboard.writeText(window.location.href);
-            alert("App link copied.");
-        }
+        await fetch(`/api/messages?room=${STATE.room}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user: STATE.user, text: "📞 Incoming Call..." })
+        });
 
-        if(!IS_GUEST) syncContacts();
-        startSync(); 
-        
-        if ('serviceWorker' in navigator) {
-            window.addEventListener('load', () => {
-                navigator.serviceWorker.register('/sw.js');
-            });
-        }
-    </script>
+        new Notification("Incoming Call", { body: "User is calling you" });
+    }
+
+    document.getElementById('send-form').onsubmit = async (e) => {
+        e.preventDefault();
+        const input = document.getElementById('msg');
+        if(!input.value || !STATE.room) return;
+
+        await fetch(`/api/messages?room=${STATE.room}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user: STATE.user, text: input.value })
+        });
+
+        input.value = '';
+        syncChat();
+    };
+
+    function startSync() {
+        setInterval(syncChat, 3000);
+        if(!IS_GUEST) setInterval(syncContacts, 10000);
+    }
+
+    if(!IS_GUEST) syncContacts();
+    startSync();
+</script>
 </body>
 </html>
